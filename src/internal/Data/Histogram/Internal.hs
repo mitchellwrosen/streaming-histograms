@@ -143,7 +143,7 @@ compress hist =
       let
         tuples' :: Seq Tuple
         tuples' =
-          x <| compressS (rankDelta hist) xs
+          x <| compressS (2 * rankDelta hist) xs
       in
         hist
           { tuples = tuples' }
@@ -157,7 +157,7 @@ compressS !n =
     Empty ->
       Seq.singleton x
     y :<| ys ->
-      if (tupG x + tupG y + tupD y) `div` 2 <= n
+      if (tupG x + tupG y + tupD y) <= n
         then
           y { tupG = tupG x + tupG y } <| ys
         else
