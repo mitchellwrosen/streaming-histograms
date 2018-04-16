@@ -152,6 +152,7 @@ prop_quantile_close_enough =
 
         -- Assert that we are indeed close enough.
         assert (abs (real_rank - given_rank) <= delta)
+
       _ ->
         error "prop_quantile_close_enough: Nothing"
 

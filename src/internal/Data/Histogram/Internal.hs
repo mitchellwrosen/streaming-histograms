@@ -11,6 +11,7 @@ import Data.Sequence (Seq(Empty, (:<|)), (<|), (|>))
 
 import qualified Data.Sequence as Seq
 
+-- | A streaming histogram that supports approximate 'quantile' queries.
 data Hist a = Hist
   { epsilon :: !Double
   , compressEvery :: !Int
@@ -32,15 +33,54 @@ data Range = Range
 --------------------------------------------------------------------------------
 -- Histogram creation
 
--- | Create an empty streaming 'Hist'.
+-- | Create an empty 'Hist' with an epsilon @ε@.
+--
+-- The epsilon must be in the range @(0,1)@ and, at a high level, controls the
+-- accuracy and space usage of the 'Hist' as follows:
+--
+-- * A __higher__ ε (such as @0.1@) results in __less accurate__ quantile
+-- queries and __lower__ space usage.
+--
+-- * A __lower__ ε (such as @0.001@) results in __more accurate__
+-- quantile queries and __higher__ space usage.
+--
+-- More specifically, a quantile query on a histogram with 𝒩 values will return
+-- a value whose rank is no more than @⌊ε×𝒩⌋@ ranks away from the /true/ value
+-- at the requested quantile.
+--
+-- For example, consider a histogram with values @[201..300]@ and @ε = 0.01@:
+--
+-- @
+-- histogram = foldr 'insert' ('new' 0.01) [201..300]
+-- @
+--
+-- The query @quantile 0.45 histogram@ asks, what is the value at the 45th
+-- quantile? The /true/ rank that corresponds to this query is
+-- @⌈q×𝒩⌉ = ⌈0.45×100⌉ = 45@, so we'd like the 45th value in sorted order,
+-- @245@.
+--
+-- Instead, we'll (deterministically) get some value that is within
+-- @⌊ε×𝒩⌋ = 0.01×100 = 1@ ranks away from @45@, which corresponds to the set
+-- of values @[244, 245, 246]@:
+--
+-- @
+-- >>> quantile 0.45 histogram
+-- Just 246
+-- @
 new :: Double -> Hist a
-new e =
-  Hist
-    { epsilon = e
-    , compressEvery = floor (1 / (2*e))
-    , size = 0
-    , tuples = mempty
-    }
+new e
+  | e <= 0 || e >= 1 =
+      error
+        ("Data.Histogram.new: epsilon "
+          ++ show e
+          ++ " must be in the range (0, 1)")
+  | otherwise =
+      Hist
+        { epsilon = e
+        , compressEvery = floor (1 / (2*e))
+        , size = 0
+        , tuples = mempty
+        }
 
 --------------------------------------------------------------------------------
 -- Misc. internal queries
@@ -66,8 +106,11 @@ tupleRanges =
 --------------------------------------------------------------------------------
 -- Histogram queries
 
--- | Find the value at the given quantile. If the 'Hist' is empty, returns
--- 'Nothing'.
+-- | Find a value within ⌊ε×𝒩⌋ ranks of ⌈q×𝒩⌉.
+--
+-- @q@ should be in the range @(0, 1]@, but this is not required.
+--
+-- If the 'Hist' is empty, returns 'Nothing'.
 quantile :: Double -> Hist a -> Maybe a
 quantile q hist@Hist{size, tuples} =
   if size == 0
@@ -98,7 +141,7 @@ quantileR n = \case
 --------------------------------------------------------------------------------
 -- Histogram modifications
 
--- | Insert a value into a streaming 'Hist'.
+-- | Insert a value into a 'Hist'.
 insert :: Ord a => a -> Hist a -> Hist a
 insert v hist =
   do_insert v (f hist)
