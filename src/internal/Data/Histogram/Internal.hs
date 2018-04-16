@@ -1,6 +1,7 @@
-{-# language BangPatterns   #-}
-{-# language LambdaCase     #-}
-{-# language NamedFieldPuns #-}
+{-# language BangPatterns        #-}
+{-# language LambdaCase          #-}
+{-# language NamedFieldPuns      #-}
+{-# language ScopedTypeVariables #-}
 
 {-# options_ghc -funbox-strict-fields #-}
 
@@ -10,15 +11,15 @@ import Data.Sequence (Seq(Empty, (:<|)), (<|), (|>))
 
 import qualified Data.Sequence as Seq
 
-data Hist = Hist
+data Hist a = Hist
   { epsilon :: !Double
   , compressEvery :: !Int
   , size :: !Int
-  , tuples :: !(Seq Tuple)
+  , tuples :: !(Seq (Tuple a))
   } deriving Show
 
-data Tuple = Tuple
-  { value :: !Double
+data Tuple a = Tuple
+  { value :: !a
   , tupG :: !Int
   , tupD :: !Int
   } deriving Show
@@ -32,7 +33,7 @@ data Range = Range
 -- Histogram creation
 
 -- | Create an empty streaming 'Hist'.
-new :: Double -> Hist
+new :: Double -> Hist a
 new e =
   Hist
     { epsilon = e
@@ -45,20 +46,20 @@ new e =
 -- Misc. internal queries
 
 -- | Should this 'Hist' be compressed before inserting?
-shouldCompress :: Hist -> Bool
+shouldCompress :: Hist a -> Bool
 shouldCompress Hist{size, compressEvery} =
   size > 0 && size `mod` compressEvery == 0
 
 -- | How many ranks this histogram's quantile queries are accurate to.
-rankDelta :: Hist -> Int
+rankDelta :: Hist a -> Int
 rankDelta Hist{epsilon, size} =
   floor (epsilon * fromIntegral size)
 
-tupleRanges :: Seq Tuple -> Seq Range
+tupleRanges :: Seq (Tuple a) -> Seq Range
 tupleRanges =
   Seq.drop 1 . Seq.scanl step (Range 0 0)
  where
-  step :: Range -> Tuple -> Range
+  step :: Range -> Tuple a -> Range
   step (Range i _) x =
     Range (i + tupG x) (i + tupG x + tupD x)
 
@@ -67,7 +68,7 @@ tupleRanges =
 
 -- | Find the value at the given quantile. If the 'Hist' is empty, returns
 -- 'Nothing'.
-quantile :: Double -> Hist -> Maybe Double
+quantile :: Double -> Hist a -> Maybe a
 quantile q hist@Hist{size, tuples} =
   if size == 0
     then
@@ -76,14 +77,14 @@ quantile q hist@Hist{size, tuples} =
       Just (quantileR (ceiling (q * fromIntegral size) + rankDelta hist) tuples)
 
 -- Invariant: sequence is non-empty.
-quantileR :: Int -> Seq Tuple -> Double
+quantileR :: Int -> Seq (Tuple a) -> a
 quantileR n = \case
   x :<| xs ->
     go 1 x xs
   _ ->
     error "quantileR: empty sequence"
  where
-  go :: Int -> Tuple -> Seq Tuple -> Double
+  go :: Int -> Tuple a -> Seq (Tuple a) -> a
   go !rmin x = \case
     Empty ->
       value x
@@ -98,11 +99,11 @@ quantileR n = \case
 -- Histogram modifications
 
 -- | Insert a value into a streaming 'Hist'.
-insert :: Double -> Hist -> Hist
+insert :: Ord a => a -> Hist a -> Hist a
 insert v hist =
   do_insert v (f hist)
  where
-  f :: Hist -> Hist
+  f :: Hist a -> Hist a
   f =
     if shouldCompress hist
       then
@@ -110,7 +111,7 @@ insert v hist =
       else
         id
 
-do_insert :: Double -> Hist -> Hist
+do_insert :: Ord a => a -> Hist a -> Hist a
 do_insert v hist@Hist{compressEvery, epsilon, size, tuples} =
   case Seq.findIndexL (\x -> value x > v) tuples of
     Nothing ->
@@ -134,25 +135,25 @@ do_insert v hist@Hist{compressEvery, epsilon, size, tuples} =
           }
 
 -- | Compress the tuples in a 'Hist'.
-compress :: Hist -> Hist
+compress :: forall a. Hist a -> Hist a
 compress hist =
   case tuples hist of
     Empty ->
       hist
     x :<| xs ->
       let
-        tuples' :: Seq Tuple
+        tuples' :: Seq (Tuple a)
         tuples' =
-          x <| compressS (2 * rankDelta hist) xs
+          x <| compressTuples (2 * rankDelta hist) xs
       in
         hist
           { tuples = tuples' }
 
-compressS :: Int -> Seq Tuple -> Seq Tuple
-compressS !n =
+compressTuples :: Int -> Seq (Tuple a) -> Seq (Tuple a)
+compressTuples !n =
   foldr step mempty
  where
-  step :: Tuple -> Seq Tuple -> Seq Tuple
+  step :: Tuple a -> Seq (Tuple a) -> Seq (Tuple a)
   step x = \case
     Empty ->
       Seq.singleton x

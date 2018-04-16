@@ -2,12 +2,13 @@
 
 import Data.Histogram.Internal
 
-import Data.List (sort)
 import Data.Foldable
 import Data.Sequence (Seq((:<|), (:|>)))
+import Data.Set (Set)
 import Hedgehog
 
 import qualified Data.Sequence as Seq
+import qualified Data.Set as Set
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
@@ -122,16 +123,19 @@ prop_quantile_elem =
 
 -- 'quantile' returns some value whose rank is within e*N of the true value's
 -- rank.
+--
+-- This property is only easily checked (without loss of generality) if no
+-- duplicates are inserted into the histogram.
 prop_quantile_close_enough :: Property
 prop_quantile_close_enough =
   property $ do
-    (hist, vals) <- forAll genHistOf1
+    (hist, vals) <- forAll genHistOfUnique1
     q <- forAll genQuantile
     case quantile q hist of
       Just val -> do
         annotateShow val
 
-        let vals' = sort vals
+        let vals' = Set.toAscList vals
         annotateShow vals'
 
         -- Get the real rank of the query, i.e. the rank we could return if we
@@ -154,33 +158,39 @@ prop_quantile_close_enough =
 --------------------------------------------------------------------------------
 -- Generators
 
-genHist :: Gen Hist
+genHist :: Gen (Hist Int)
 genHist =
   fmap fst genHistOf
 
-genHist1 :: Gen Hist
+genHist1 :: Gen (Hist Int)
 genHist1 =
   fmap fst genHistOf1
 
-genHistOf :: Gen (Hist, [Double])
+genHistOf :: Gen (Hist Int, [Int])
 genHistOf = do
   e <- Gen.prune (Gen.double (Range.exponentialFloat 0.01 0.1))
-  xs <- Gen.list (Range.linear 0 100) (Gen.prune (Gen.double (Range.constant 0 100)))
+  xs <- Gen.list (Range.linear 0 100) (Gen.prune (Gen.int (Range.constant 0 100)))
   pure (foldr insert (new e) xs, xs)
 
-genHistOf1 :: Gen (Hist, [Double])
+genHistOf1 :: Gen (Hist Int, [Int])
 genHistOf1 = do
-  e <- pure 0.1 -- Gen.prune (Gen.double (Range.exponentialFloat 0.01 0.1))
-  xs <- Gen.list (Range.linear 1 100) (Gen.prune (Gen.double (Range.constant 0 100)))
+  e <- Gen.prune (Gen.double (Range.exponentialFloat 0.01 0.1))
+  xs <- Gen.list (Range.linear 1 100) (Gen.prune (Gen.int (Range.constant 0 100)))
   pure (foldr insert (new e) xs, xs)
 
-genTuples :: Gen (Seq Tuple)
+genHistOfUnique1 :: Gen (Hist Int, Set Int)
+genHistOfUnique1 = do
+  e <- Gen.prune (Gen.double (Range.exponentialFloat 0.01 0.1))
+  xs <- Gen.set (Range.linear 1 100) (Gen.prune (Gen.int (Range.constant 0 100)))
+  pure (foldr insert (new e) xs, xs)
+
+genTuples :: Gen (Seq (Tuple Int))
 genTuples =
   fmap tuples genHist
 
 genQuantile :: Gen Double
 genQuantile =
-  pure 0.1 -- Gen.prune (Gen.double (Range.constant 0 1))
+  Gen.prune (Gen.double (Range.constant 0 1))
 
 --------------------------------------------------------------------------------
 -- Misc.
